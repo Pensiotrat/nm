@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0. viewport-fit=cover"/>
+ 
+  <title>Пасьянс «Паганини»</title>
+  <!-- PWA: манифест -->
+<link rel="manifest" href="manifest.json">
+
+<!-- Иконка для старых браузеров -->
+<link rel="icon" type="image/png" href="icon-192.png">
+
+<!-- Тема для Android -->
+<meta name="theme-color" content="#6b9e6b">
+  <style>
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: #8fbc8f;
+    font-family: Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    width: 100vw;
+    overflow: hidden; /* предотвращает прокрутку при увеличении */
+    touch-action: manipulation;
+  }
+
+  #launcher {
+    text-align: center;
+    margin: 10px 0;
+    z-index: 10;
+  }
+
+  #launcher button {
+    padding: 10px 20px;
+    font-size: clamp(14px, 4vw, 18px);
+    cursor: pointer;
+  }
+
+  .game-container {
+    display: none;
+    width: 100%;
+    max-width: 95vw; /* не более 95% ширины экрана */
+    padding: 0 5px;
+    box-sizing: border-box;
+  }
+
+  .row {
+    display: flex;
+    margin-bottom: clamp(2px, 1vh, 6px);
+    gap: clamp(2px, 0.8vw, 3px);
+    justify-content: center;
+  }
+
+  /* Адаптивный размер ячейки */
+  .cell {
+    width: clamp(40px, 7.5vw, 80px);
+    aspect-ratio: 0.7 / 1; /* ширина/высота ≈ 0.7 → высота ≈ 1.43 × ширина */
+    border: 1px solid #333;
+    border-radius: 6px;
+    box-shadow: 0 2px 0 rgba(0,0,0,.04);
+    background-color: #faeedd;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0; /* не сжимать при нехватке места */
+  }
+
+  .cell.empty {
+    background-color: #8fbc8f;
+    box-shadow: inset 2px 2px 5px rgba(154, 147, 140, 0.5), 1px 1px 5px rgba(255, 255, 255, 1);
+  }
+
+  .card {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    box-shadow: inset rgba(255,255,255,0.2) 8px 8px 24px 5px,
+                inset rgba(0,0,0,0.2) -8px -8px 8px 5px;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .rank {
+    position: absolute;
+    top: 2px;
+    left: 4px;
+    font-size: clamp(14px, 3.5vw, 22px);
+    font-weight: bold;
+    text-shadow: #fff -1px -1px 0, #666 1px 1px 0;
+  }
+
+  .suit {
+    position: absolute;
+    bottom: 2px;
+    right: 4px;
+    font-size: clamp(18px, 4.5vw, 28px);
+    text-shadow: #fff -1px -1px 0, #666 1px 1px 0;
+  }
+
+  .selected {
+    outline: clamp(2px, 0.6vw, 3px) solid blue;
+  }
+</style>
+</head>
+<body>
+  <div id="launcher">
+    <button onclick="startGame()">Начать игру</button>
+    <br><br>
+    <button onclick="openInNewWindow()">Играть в отдельном окне</button>
+  </div>
+
+  <div class="game-container" id="game"></div>
+
+  <script>
+  let deferredPrompt;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Можно показать свою кнопку "Установить"
+  // Например: document.getElementById('installBtn').style.display = 'block';
+});
+
+// Пример установки по клику (если добавите кнопку)
+// function installPWA() {
+//   if (deferredPrompt) {
+//     deferredPrompt.prompt();
+//     deferredPrompt.userChoice.then(() => deferredPrompt = null);
+//   }
+// }
+    // Масти и символы
+    const suits = ['♠', '♥', '♦', '♣'];
+    const ranks = ['A', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+    const suitColors = { '♠': 'black', '♣': 'black', '♥': 'red', '♦': 'red' };
+
+    let selectedCard = null;
+    let draggedCard = null; // добавляю переменную для drag-and-drop!
+    let board = [];
+    let aces = [];
+
+    function createDeck() {
+      const deck = [];
+      for (const suit of suits) {
+        for (const rank of ranks) {
+          deck.push({ rank, suit });
+        }
+      }
+      return deck;
+    }
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+
+    function initGame() {
+      const deck = shuffle(createDeck());
+      board = [];
+      aces = new Array(4).fill(null);
+
+      // Полный расклад 4×9
+      let index = 0;
+      for (let row = 0; row < 4; row++) {
+        const rowCards = [];
+        for (let col = 0; col < 9; col++) {
+          rowCards.push(deck[index++]);
+        }
+        board.push(rowCards);
+      }
+
+      // Извлекаем тузы
+      const foundAces = [];
+      for (let row = 0; row < 4; row++) {
+        for (let col = 0; col < 9; col++) {
+          if (board[row][col].rank === 'A') {
+            foundAces.push(board[row][col]);
+            board[row][col] = null;
+          }
+        }
+      }
+
+      if (foundAces.length !== 4) {
+        console.error('Ошибка: не найдено 4 туза!');
+        return;
+      }
+
+      shuffle(foundAces);
+      for (let row = 0; row < 4; row++) {
+        aces[row] = foundAces[row];
+      }
+
+      renderGame();
+    }
+
+    function renderGame() {
+      const gameContainer = document.getElementById('game');
+      gameContainer.innerHTML = '';
+      gameContainer.style.display = 'block';
+
+      for (let row = 0; row < 4; row++) {
+        const rowDiv = document.createElement('div');
+        rowDiv.className = 'row';
+
+        const aceCell = document.createElement('div');
+        aceCell.className = 'cell';
+        if (aces[row]) {
+          aceCell.appendChild(createCardElement(aces[row]));
+        }
+        rowDiv.appendChild(aceCell);
+
+        for (let col = 0; col < 9; col++) {
+          const cell = document.createElement('div');
+          cell.className = board[row][col] === null ? 'cell empty' : 'cell';
+          cell.dataset.row = row;
+          cell.dataset.col = col;
+
+          if (board[row][col]) {
+            const cardEl = createCardElement(board[row][col]);
+            // Сохраняю координаты в DOM-элементе для drag
+            cardEl.dataset.row = row;
+            cardEl.dataset.col = col;
+            // Здеся бработчик начала перетаскивания 
+            cardEl.addEventListener('dragstart', (e) => {
+              draggedCard = { card: board[row][col], row, col };
+              e.dataTransfer.setData('text/plain', '');
+            });
+            cell.appendChild(cardEl);
+          }
+
+          // Клик — как было у меня раньше
+          cell.addEventListener('click', () => handleCellClick(row, col));
+
+          // Drag-and-drop: разрешить сброс
+          cell.addEventListener('dragover', (e) => {
+            e.preventDefault(); // обязательно!
+          });
+
+          // Обработка сброса
+          cell.addEventListener('drop', (e) => {
+            e.preventDefault();
+            handleDrop(row, col);
+          });
+
+          rowDiv.appendChild(cell);
+        }
+
+        gameContainer.appendChild(rowDiv);
+      }
+    }
+
+    function createCardElement(card) {
+      const cardDiv = document.createElement('div');
+      cardDiv.className = 'card';
+      cardDiv.draggable = true; // ← делаем перетаскиваемым (как я Юле писал)
+
+      const rankSpan = document.createElement('span');
+      rankSpan.className = 'rank';
+      rankSpan.textContent = card.rank;
+      rankSpan.style.color = suitColors[card.suit];
+
+      const suitSpan = document.createElement('span');
+      suitSpan.className = 'suit';
+      suitSpan.textContent = card.suit;
+      suitSpan.style.color = suitColors[card.suit];
+
+      cardDiv.appendChild(rankSpan);
+      cardDiv.appendChild(suitSpan);
+      return cardDiv;
+    }
+
+    function handleCellClick(row, col) {
+      draggedCard = null; // отменяеся перетаскивание при клике (по другому можно?)
+      const clickedCard = board[row][col];
+
+      if (clickedCard === null) {
+        if (selectedCard) {
+          if (isValidMove(selectedCard.card, row, col)) {
+            board[selectedCard.row][selectedCard.col] = null;
+            board[row][col] = selectedCard.card;
+            selectedCard = null;
+            renderGame();
+            checkWin();
+          }
+        }
+      } else {
+        if (selectedCard) {
+          const prevCell = document.querySelector(`.cell[data-row="${selectedCard.row}"][data-col="${selectedCard.col}"]`);
+          if (prevCell) prevCell.classList.remove('selected');
+        }
+        selectedCard = { card: clickedCard, row, col };
+        const currentCell = document.querySelector(`.cell[data-row="${row}"][data-col="${col}"]`);
+        currentCell.classList.add('selected');
+      }
+    }
+
+    function handleDrop(toRow, toCol) {
+      if (!draggedCard) return;
+      const { card, row: fromRow, col: fromCol } = draggedCard;
+
+      // Нельзя сбрасывать на занятую ячейку
+      if (board[toRow][toCol] !== null) {
+        draggedCard = null;
+        return;
+      }
+
+      if (isValidMove(card, toRow, toCol)) {
+        board[fromRow][fromCol] = null;
+        board[toRow][toCol] = card;
+        draggedCard = null;
+        renderGame();
+        checkWin();
+      } else {
+        draggedCard = null;
+      }
+    }
+
+    function isValidMove(card, toRow, toCol) {
+      // Правило для 6: можно положить в первую ячейку ряда, если масть совпадает с тузом
+      if (toCol === 0 && card.rank === '6' && card.suit === aces[toRow].suit) {
+        return true;
+      }
+
+      const leftCard = toCol > 0 ? board[toRow][toCol - 1] : null;
+      const rightCard = toCol < 8 ? board[toRow][toCol + 1] : null;
+
+      if (leftCard && leftCard.suit === card.suit && isNextRank(leftCard.rank, card.rank)) {
+        return true;
+      }
+      if (rightCard && rightCard.suit === card.suit && isNextRank(card.rank, rightCard.rank)) {
+        return true;
+      }
+      return false;
+    }
+
+    function isNextRank(rank1, rank2) {
+      const order = ['A', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+      const idx1 = order.indexOf(rank1);
+      const idx2 = order.indexOf(rank2);
+      return idx2 === idx1 + 1;
+    }
+
+    function checkWin() {
+      for (let row = 0; row < 4; row++) {
+        const expectedSuit = aces[row].suit;
+        for (let col = 0; col < 9; col++) {
+          const card = board[row][col];
+          if (!card || card.suit !== expectedSuit || card.rank !== ranks[col]) {
+            return;
+          }
+        }
+      }
+      setTimeout(() => alert('Поздравлямба! Пасьянс сошёлся!'), 100);
+    }
+
+    function startGame() {
+      document.getElementById('launcher').style.display = 'none';
+      initGame();
+    }
+
+    function openInNewWindow() {
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html lang="ru">
+        <head>
+          <meta charset="UTF-8"/>
+          <title>Паганини</title>
+          <style>
+            body { margin: 0; padding: 20px; background-color: #8fbc8f; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+            .row { display: flex; margin-bottom: 6px; gap: 3px; }
+            .cell { width: 56px; height: 76px; border: 1px solid #333; background-color: white; display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
+            .cell.empty { background-color: #8fbc8f; }
+            .card { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; position: relative; }
+            .rank { position: absolute; top: 2px; left: 2px; font-size: 18px; font-weight: bold; }
+            .suit { position: absolute; bottom: 2px; right: 2px; font-size: 20px; }
+            .selected { outline: 2px solid blue; }
+          </style>
+        </head>
+        <body>
+          <div id="game"></div>
+          <script>
+            ${createDeck.toString()}
+            ${shuffle.toString()}
+            ${initGame.toString()}
+            ${renderGame.toString()}
+            ${createCardElement.toString()}
+            ${handleCellClick.toString()}
+            ${handleDrop.toString()}
+            ${isValidMove.toString()}
+            ${isNextRank.toString()}
+            ${checkWin.toString()}
+
+            const suits = ${JSON.stringify(suits)};
+            const ranks = ${JSON.stringify(ranks)};
+            const suitColors = ${JSON.stringify(suitColors)};
+            let selectedCard = null;
+            let draggedCard = null;
+            let board = [];
+            let aces = [];
+
+            // Запуск
+            initGame();
+          <\/script>
+        </body>
+        </html>
+      `;
+
+      const blob = new Blob([htmlContent], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, 'PaganiniGame', 'width=700,height=500,resizable=yes,scrollbars=no');
+    }
+  </script>
+  <script>
+  // Регистрация Service Worker для PWA
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('./sw.js')
+        .then(reg => console.log('SW registered:', reg))
+        .catch(err => console.warn('SW failed:', err));
+    });
+  }
+</script>
+</body>
+</html>
